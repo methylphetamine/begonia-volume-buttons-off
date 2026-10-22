@@ -1,0 +1,159 @@
+name: Build module
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate module
+        run: |
+          set -euo pipefail
+          test -f module/module.prop
+          grep -q '^id=begonia-volume-buttons-off$' module/module.prop
+          test -f module/META-INF/com/google/android/update-binary
+          test -f module/META-INF/com/google/android/updater-script
+          test -f module/post-fs-data.sh
+          test -f module/post-mount.sh
+          test -f module/customize.sh
+          sh -n module/post-fs-data.sh
+          sh -n module/post-mount.sh
+          sh -n module/customize.sh
+
+          for f in \
+              module/system/usr/keylayout/Generic.kl \
+              module/system/usr/keylayout/mtk-kpd.kl \
+              module/vendor/usr/keylayout/Generic.kl \
+              module/vendor/usr/keylayout/mtk-kpd.kl \
+              module/odm/usr/keylayout/Generic.kl \
+              module/odm/usr/keylayout/mtk-kpd.kl; do
+            test -f "$f"
+            if grep -Eq '^[[:space:]]*key[[:space:]]+[0-9]+[[:space:]]+VOLUME_(UP|DOWN)([[:space:]]|$)' "$f"; then
+              echo "::error::$f still maps a volume key"
+              exit 1
+            fi
+            grep -Eq '^[[:space:]]*key[[:space:]]+116[[:space:]]+POWER([[:space:]]|$)' "$f"
+            echo "OK: $f"
+          done
+
+      - name: Package module
+        id: package
+        run: |
+          set -euo pipefail
+          VERSION=$(sed -n 's/^version=//p' module/module.prop | head -1)
+          VERSION=${VERSION:-v1.0}
+          ZIP="dist/begonia-volume-buttons-off-${VERSION}.zip"
+          mkdir -p dist
+          rm -f "$ZIP" "$ZIP.sha256"
+          (cd module && zip -r "../$ZIP" . -x '*.DS_Store' -x '__MACOSX/*' -x '*.log' -x '.work/*')
+          unzip -l "$ZIP" | grep -q ' module.prop$'
+          sha256sum "$ZIP" | tee "$ZIP.sha256"
+          echo "zip=$ZIP" >> "$GITHUB_OUTPUT"
+          echo "--- zip contents ---"
+          unzip -l "$ZIP"
+
+      - name: Upload to Gofile
+        id: gofile
+        run: |
+          set -euo pipefail
+          ZIP="${{ steps.package.outputs.zip }}"
+          SRV=$(curl -fsSL https://api.gofile.io/servers | jq -r '.data.servers[0].name // empty')
+          if [ -z "$SRV" ]; then
+            echo "::error::Gofile returned no upload server"
+            exit 1
+          fi
+          HTTP=$(curl -sS --retry 3 -o /tmp/gofile.json -w '%{http_code}' \
+            -F "file=@${ZIP}" "https://${SRV}.gofile.io/contents/uploadfile" || true)
+          cat /tmp/gofile.json || true
+          URL=$(jq -r '.data.downloadPage // empty' /tmp/gofile.json 2>/dev/null || true)
+          if [ -z "$URL" ]; then
+            echo "::error::Gofile upload failed (HTTP ${HTTP:-?})"
+            exit 1
+          fi
+          echo "Gofile: $URL"
+          echo "url=$URL" >> "$GITHUB_OUTPUT"
+
+      - name: Upload to Telegram
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          GOFILE_URL: ${{ steps.gofile.outputs.url }}
+          ZIP: ${{ steps.package.outputs.zip }}
+        run: |
+          set -euo pipefail
+          if [ -z "${TELEGRAM_BOT_TOKEN:-}" ] || [ -z "${TELEGRAM_CHAT_ID:-}" ]; then
+            echo "::warning::TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID is not configured; skipping Telegram upload"
+            exit 0
+          fi
+
+          SHA=$(sha256sum "$ZIP" | awk '{print $1}')
+          RUN_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          CAPTION=$(printf 'Begonia Volume Buttons Off\nSHA256: %s\nGofile: %s\nRun: %s' \
+            "$SHA" "${GOFILE_URL:-n/a}" "$RUN_URL")
+
+          API="https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}"
+          HTTP=$(curl -sS --retry 3 -o /tmp/telegram.json -w '%{http_code}' \
+            -F "chat_id=${TELEGRAM_CHAT_ID}" \
+            -F "document=@${ZIP}" \
+            -F "caption=${CAPTION}" \
+            "${API}/sendDocument" || true)
+
+          if [ "$HTTP" = "200" ] && jq -e '.ok == true' /tmp/telegram.json >/dev/null 2>&1; then
+            echo "Telegram: document sent"
+            exit 0
+          fi
+
+          echo "::warning::sendDocument failed (HTTP ${HTTP:-?}); sending a link instead"
+          cat /tmp/telegram.json || true
+
+          TEXT=$(printf 'Begonia Volume Buttons Off\nSHA256: %s\nGofile: %s\nRun: %s' \
+            "$SHA" "${GOFILE_URL:-n/a}" "$RUN_URL")
+          curl -sS --retry 3 -o /tmp/telegram-message.json -w '%{http_code}' \
+            --data-urlencode "chat_id=${TELEGRAM_CHAT_ID}" \
+            --data-urlencode "text=${TEXT}" \
+            "${API}/sendMessage" || true
+
+          if jq -e '.ok == true' /tmp/telegram-message.json >/dev/null 2>&1; then
+            echo "Telegram: link sent"
+          else
+            echo "::warning::Telegram notification failed"
+            cat /tmp/telegram-message.json || true
+          fi
+
+      - name: Upload zip artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: begonia-volume-buttons-off
+          path: |
+            dist/*.zip
+            dist/*.sha256
+          if-no-files-found: error
+
+      - name: Publish GitHub release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ZIP: ${{ steps.package.outputs.zip }}
+          GOFILE_URL: ${{ steps.gofile.outputs.url }}
+        run: |
+          set -euo pipefail
+          SHA=$(sha256sum "$ZIP" | awk '{print $1}')
+          NOTES=$(printf 'Disables the volume up/down buttons on the Redmi Note 8 Pro (begonia) in Magisk, KernelSU and APatch.\n\nSHA256: %s\nGofile: %s' "$SHA" "${GOFILE_URL:-n/a}")
+          gh release create "$GITHUB_REF_NAME" "$ZIP" "$ZIP.sha256" \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "Begonia Volume Buttons Off $GITHUB_REF_NAME" \
+            --notes "$NOTES"

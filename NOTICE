@@ -1,0 +1,8 @@
+Begonia Volume Buttons Off
+Copyright 2026 methylphetamine
+
+The key layout files under module/system/usr/keylayout and
+module/vendor/usr/keylayout are derived from the Android Open Source Project's
+Generic.kl, which is licensed under the Apache License, Version 2.0.
+
+Source: https://android.googlesource.com/platform/frameworks/base/+/refs/heads/main/data/keyboards/Generic.kl

@@ -1,0 +1,5 @@
+dist/
+*.zip
+*.sha256
+*.log
+module/.work/

@@ -1,0 +1,6 @@
+id=begonia-volume-buttons-off
+name=Begonia Volume Buttons Off
+version=v1.0
+versionCode=1
+author=methylphetamine
+description=Disables the VOLUME UP/DOWN hardware buttons on the Redmi Note 8 Pro (begonia). Power and all other keys keep working. Reboot required.
