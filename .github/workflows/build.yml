@@ -28,6 +28,8 @@ jobs:
           test -f module/META-INF/com/google/android/update-binary
           test -f module/META-INF/com/google/android/updater-script
           test -f module/post-fs-data.sh
+          test ! -e module/vendor
+          test ! -e module/odm
           test -f module/post-mount.sh
           test -f module/customize.sh
           sh -n module/post-fs-data.sh
@@ -37,10 +39,8 @@ jobs:
           for f in \
               module/system/usr/keylayout/Generic.kl \
               module/system/usr/keylayout/mtk-kpd.kl \
-              module/vendor/usr/keylayout/Generic.kl \
-              module/vendor/usr/keylayout/mtk-kpd.kl \
-              module/odm/usr/keylayout/Generic.kl \
-              module/odm/usr/keylayout/mtk-kpd.kl; do
+              module/system/vendor/usr/keylayout/Generic.kl \
+              module/system/vendor/usr/keylayout/mtk-kpd.kl; do
             test -f "$f"
             if grep -Eq '^[[:space:]]*key[[:space:]]+[0-9]+[[:space:]]+VOLUME_(UP|DOWN)([[:space:]]|$)' "$f"; then
               echo "::error::$f still maps a volume key"
@@ -60,11 +60,13 @@ jobs:
           mkdir -p dist
           rm -f "$ZIP" "$ZIP.sha256"
           (cd module && zip -r "../$ZIP" . -x '*.DS_Store' -x '__MACOSX/*' -x '*.log' -x '.work/*')
-          unzip -l "$ZIP" | grep -q ' module.prop$'
+          unzip -l "$ZIP" > /tmp/module-ziplist.txt
+          grep -q ' module.prop$' /tmp/module-ziplist.txt
+          grep -q ' system/vendor/usr/keylayout/Generic.kl$' /tmp/module-ziplist.txt
           sha256sum "$ZIP" | tee "$ZIP.sha256"
           echo "zip=$ZIP" >> "$GITHUB_OUTPUT"
           echo "--- zip contents ---"
-          unzip -l "$ZIP"
+          cat /tmp/module-ziplist.txt
 
       - name: Upload to Gofile
         id: gofile

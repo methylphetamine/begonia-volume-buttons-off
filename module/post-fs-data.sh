@@ -2,14 +2,16 @@
 # Fallback for managers that do not mount the module's system/ directory
 # (notably KernelSU without a metamodule such as meta-overlayfs).
 #
-# Magisk, APatch and KernelSU+meta-overlayfs already expose the patched files
-# from system/, vendor/ and odm/ before this runs; in that case the target
-# file has no VOLUME_UP/VOLUME_DOWN mapping and is left alone.
+# Some managers apply the module's static overlay before this script, in which
+# case the target file has no VOLUME_UP/VOLUME_DOWN mapping and is left alone.
+# Others apply the overlay after the script; the overlay then stacks the same
+# patched file on top.  On managers without a system overlay this script is the
+# only mechanism.
 #
-# On managers without a system overlay, this script copies each key layout
-# that still contains a volume mapping, removes the mapping, labels the copy
-# like the original partition, and bind-mounts it over the original.  This
-# runs in the post-fs-data stage, before zygote/system_server starts.
+# The script copies each key layout that still contains a volume mapping,
+# removes the mapping, labels the copy as system_file, and bind-mounts it over
+# the original.  This runs in the post-fs-data stage, before zygote and
+# system_server start.
 
 MODDIR=${0%/*}
 LOG="$MODDIR/post-fs-data.log"

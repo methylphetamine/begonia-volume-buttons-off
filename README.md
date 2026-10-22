@@ -70,26 +70,28 @@ Files included:
 ```text
 system/usr/keylayout/Generic.kl
 system/usr/keylayout/mtk-kpd.kl
-vendor/usr/keylayout/Generic.kl
-vendor/usr/keylayout/mtk-kpd.kl
-odm/usr/keylayout/Generic.kl
-odm/usr/keylayout/mtk-kpd.kl
+system/vendor/usr/keylayout/Generic.kl
+system/vendor/usr/keylayout/mtk-kpd.kl
 ```
 
 The `mtk-kpd.kl` copies cover devices whose keypad reports the MediaTek
 `mtk-kpd` input name; the `Generic.kl` copies cover the fallback path used by
-this device tree. The vendor and odm copies win over the system copies on
-devices where those partitions take priority.
+this device tree. The vendor files live under `system/vendor` because that is
+the standard module layout Magisk and KernelSU expect; the manager maps them
+to the real `/vendor` path (or leaves them under `/system/vendor` when that is
+how the device mounts vendor). The fallback script covers `/odm` and any
+device-specific layout that is not in the static list.
 
 The module also ships `post-fs-data.sh`, a fallback for managers that do not
 mount module `system/` directories, notably KernelSU without a metamodule.
 It scans `/system`, `/vendor` and `/odm` key layouts at boot, copies any file
 that still maps a volume key, removes the mapping, labels the copy as
 `system_file` (the label Android's input service can read), and bind-mounts it
-over the original. When the normal overlay is already active, the file has no
-volume mapping and the script does nothing. KernelSU users who have
-`meta-overlayfs` installed get the normal overlay path; users who do not still
-get the bind-mount fallback.
+over the original. If a manager applies the static overlay before the script,
+the file already has no volume mapping and the script skips it; if the overlay
+is applied after the script, the overlay stacks the same patched file on top.
+KernelSU users who have `meta-overlayfs` installed get the normal overlay
+path; users who do not still get the bind-mount fallback.
 `post-mount.sh` re-runs the same fallback after KernelSU's OverlayFS mount, so
 device-specific key layouts that are not in the static overlay are covered
 there too. Magisk and APatch ignore `post-mount.sh`.
