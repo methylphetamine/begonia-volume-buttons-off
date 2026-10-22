@@ -45,7 +45,9 @@ patch_file() {
         chcon "$ctx" "$out" 2>/dev/null || echo "chcon failed: $f"
     fi
 
-    if mount --bind "$out" "$f"; then
+    # Android's toybox mount does not accept util-linux's --bind spelling.
+    # -o bind is the portable form; the second form is toybox's autodetect.
+    if mount -o bind "$out" "$f" 2>/dev/null || mount "$out" "$f"; then
         echo "patched: $f"
         changed=$((changed + 1))
     else
